@@ -1,0 +1,49 @@
+{
+  "_orangequiz_section": {
+    "description": "=== OrangeQuiz 问卷设置 ===",
+    "type": "text",
+    "invisible": true
+  },
+  "invite_poster_tip": {
+    "description": "海报说明文案",
+    "type": "text",
+    "default": "对bot发送以上带有编号的指令，开始同款测试，分享测试结果！",
+    "hint": "展示在新问卷发布海报中间及结果海报下段的提示语句，可用 {test_id} 代替问卷专属号码"
+  },
+  "footer_text": {
+    "description": "海报底部水印文字",
+    "type": "text",
+    "default": "可以和bot私聊参与测试 \n -- 由 Astrbot 插件 OrangeQuiz 强力驱动 --",
+    "hint": "自定义展示在生成结果海报最下方的尾标文字，支持输入多行"
+  },
+  "allow_group_quiz": {
+    "description": "允许在群聊中互动答题",
+    "type": "bool",
+    "default": false,
+    "hint": "✅ 开启: 不受限制。\n❌ 关闭: 群聊中发送指令将提示前往私聊进行（防刷屏）；但已做完测试的用户仍可以在群内触发自己的成绩海报。"
+  },
+  "allow_group_create": {
+    "description": "允许在群聊中出题",
+    "type": "bool",
+    "default": false,
+    "hint": "✅ 开启: 不受限制。\n❌ 关闭: 群聊中使用 /quiz_create 将提示前往私聊进行（防止生成问卷时刷屏）。"
+  },
+  "daily_create_limit": {
+    "description": "每日生成测试次数上限",
+    "type": "int",
+    "default": 3,
+    "hint": "每个用户每天最多能用AI生成几份新问卷（Bot管理员无视此限制）"
+  },
+  "max_modify_count": {
+    "description": "每次生成问卷的修改次数上限",
+    "type": "int",
+    "default": 8,
+    "hint": "在生成一份新问卷的过程中，最多允许对AI要求微调修改几次"
+  },
+  "admin_only_create": {
+    "description": "仅限管理员新增问卷",
+    "type": "bool",
+    "default": false,
+    "hint": "✅ 开启: 只有Bot管理员可以使用 /quiz_create 创建新问卷。\n❌ 关闭: 所有人均可创建（受每日上限限制）。"
+  }
+}

@@ -1,14 +1,84 @@
-# astrbot-plugin-helloworld
+<div align="center">
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+<img src="https://count.getloli.com/@largefox_orangequiz?name=largefox_orangequiz&theme=rule34&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="Moe Counter">
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+**智能测试问卷分发系统，支持动态人格注入、精美档案卡片生成与群组互动的娱乐核心**
 
-# Supports
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue)
+![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.9.2-green)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20MacOS-lightgrey)
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+</div>
+
+---
+
+## 📢 简介
+
+OrangeQuiz（橘子测试）是一款基于 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 框架的高智能问卷测试娱乐插件。依托底层强大的大语言模型聚合能力，它能够根据管理员或用户的一句灵感描述，瞬间从无到有地生成包含数道逻辑多选题在内的心理测试、情境抉择或搞怪问卷。
+
+本插件为每段测试生成极具分享价值的“打分档案海报”，并调用LLM，让生成出的测试剧情及最终点评带有与当前 AI 人格严格对应的腔调与毒舌感！
+
+## ✨ 核心功能
+| 功能 | 说明 |
+|:---|:---|
+| **AI 极速生成** | 基于一段自定义主题，AI 将自动出题并控制题目数量与发散逻辑。 |
+| **全画幅海报渲染** | 答题跑完流程后，生成结果档案，自带精美背景样式。 |
+| **反刷屏与安全分流** | 系统检测群组，可灵活配置“群组防刷屏”，将互动大流量隔离至私聊。 |
+| **沙盒化数据库与排位** | 生成与游玩的轨迹均由本地 SQLite 无感建档热记录，自带排行榜追踪。 |
+| **系统级合规存储** | 全面遵循 AstrBot V4 大文件存储规范，保证资产稳定存放、易于管理。 |
+
+### 1. 安装
+在 AstrBot 插件管理面板或扩展商店中，搜索并安装 `astrbot_plugin_orangequiz`。
+
+### 2. 前置条件
+**基础大语言模型**——插件深度且高频地依赖核心大模型来输出 JSON 结构化的题目以及结果评价。请确保当前会话链路绑定的 LLM 有较强的逻辑理解能力（推荐使用主流级别的中大参数模型）。
+
+### 3. 开始使用
+问卷创建及所有的调度与游玩，一切动作可仅依靠对话即可。
+首次加载本插件后，你可以让所有用户在群内使用 `#quiz list` 或 `#测试列表` 检阅已有资源。
+
+### 4. 存储说明
+所有问卷生成数据均托管于系统标准存储分配区间：`data/plugin_data/astrbot_plugin_orangequiz/`。包含但不限于生成的海报暂存、独立的 `.db` SQLite游玩记录表和序列化问卷JSON。
+
+### 权限与管理模式
+所有配置均可在 AstrBot 的可视网页端面板（控制面板）中热重载调整。
+
+| 配置项 | 默认值 | 说明 |
+|:---|:---|:---|
+| **仅限管理员新增问卷** | `false` | ✅ 开启: 只有Bot管理员能用测试指令出题并存入公共库，防止资源滥用 |
+| **每日生成测试次数上限** | `3` | 非管理员用户每天能够生成最新测试问卷的总数量 |
+| **每次生成问卷的修改次数上限** | `3` | 人机交互出题时，对于 AI 草案退回驳回的交流轮数限制 |
+| **允许在群聊中互动答题** | `false` | 关闭后，在群聊中触发答题指令也会被劝导前往私聊获取响应（防刷排版） |
+| **海报引导分享文案** | `👉 发送...`| 预设在底部的文字提示，自动关联当前指令前缀与ID |
+| **海报底部水印文字** | `可以和我...`| 版权及导流区域宣告文字 |
+
+## 指令列表
+
+### 日常使用（全员）
+| 英文主命令 / 子命令 | 支持的中文触发符 | 说明 |
+|:---|:---|:---|
+| `/quiz list` | `/测试列表`、`/问卷列表` | 检阅系统收录的所有现存问卷 |
+| `/quiz hot` | `/热门测试`、`/测试排名` | 查看大家玩得最多的 Top 定制问卷 |
+| `/quiz [编号]` | `/测试`、`/答题` | 开始测算一份最新问卷或通过 `编号` 精准开始 |
+| `/quiz [编号] retry`| （同上带 retry） | 重新挑战某份结果记录并刷新评语 |
+| `/quiz stop` | `/退出测试`、`/停止测试`、`/取消` | 强制终止当前的制卷、答题轮回 |
+| `/quiz help` | `/测试帮助` | 输出速查说明书 |
+
+### 主动创建问卷（受权开放）
+| 英文主命令 / 子命令 | 支持的中文触发符 | 说明 |
+|:---|:---|:---|
+| `/quiz create` | `/创建测试`、`/新增问卷` | 进入问卷对话生成交互界面（依面板规则可能有权限锁） |
+
+*注意：上述 `/` 仅为示例，请以平台设定的具体调用前缀为准。如设置成!，则命令变为!quiz*
+*群组触发后支持灵活带空无空格格式如 `123 456` 获取对应编码。*
+
+---
+
+<div align="center">
+
+喜欢这份小玩具的话给个 ⭐ Star 吧！
+
+欢迎在 [Issue](https://github.com/largefox/astrbot_plugin_orangequiz/issues) 提供错误反馈。
+
+</div>
