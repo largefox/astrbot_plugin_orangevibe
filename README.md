@@ -2,7 +2,7 @@
 
 <img src="https://count.getloli.com/@largefox_orangequiz?name=largefox_orangequiz&theme=rule34&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="Moe Counter">
 
-**智能测试问卷玩法插件，支持动态人格点评、结果海报渲染与群组防刷屏隔离**
+**智能测试问卷插件，支持动态人格点评、结果海报渲染与群组防刷屏隔离**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 ![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue)

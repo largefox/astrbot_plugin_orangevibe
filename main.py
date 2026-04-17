@@ -3,7 +3,10 @@ import os
 import time
 import asyncio
 from typing import Dict, Any
+from pathlib import Path
 from astrbot.api.all import *
+from astrbot.api.star import StarTools
+from astrbot.api import logger
 
 from astrbot.api.event import filter, AstrMessageEvent
 from .utils.ai_handler import generate_quiz, generate_snarky_eval
@@ -16,7 +19,7 @@ from .utils.templates import RESULT_TMPL, INVITE_TMPL
     "astrbot_plugin_orangequiz",
     "largefox",
     "让让大模型化身性格鉴定师！LLM自动生成互动问卷，智能分析结果，测完还送一张属性海报。",
-    "1.0.0",
+    "1.0.1",
     "",
 )
 class OrangeQuiz(Star):
@@ -27,24 +30,27 @@ class OrangeQuiz(Star):
         self.create_sessions: Dict[str, Any] = {}
 
         try:
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+            self.base_data_dir = StarTools.get_data_dir()
+        except Exception as e:
+            logger.error(
+                f"OrangeQuiz: StarTools.get_data_dir() failed, using fallback path. Error: {e}"
+            )
+            self.base_data_dir = Path(
+                os.path.abspath(
+                    os.path.join(
+                        os.getcwd(), "data", "plugin_data", "astrbot_plugin_orangequiz"
+                    )
+                )
+            )
 
-            base_dir = get_astrbot_data_path()
-        except ImportError:
-            base_dir = os.path.abspath(os.path.join(os.getcwd(), "data"))
-
-        self.base_data_dir = os.path.join(
-            base_dir, "plugin_data", "astrbot_plugin_orangequiz"
-        )
-        self.quizzes_dir = os.path.join(self.base_data_dir, "quizzes")
-        self.temp_dir = os.path.join(self.base_data_dir, "temp")
+        self.quizzes_dir = self.base_data_dir / "quizzes"
+        self.temp_dir = self.base_data_dir / "temp"
 
         for d in [self.quizzes_dir, self.temp_dir]:
-            if not os.path.exists(d):
-                os.makedirs(d)
+            os.makedirs(d, exist_ok=True)
 
         # Generate default quiz if not exists
-        default_quiz_path = os.path.join(self.quizzes_dir, "000001.json")
+        default_quiz_path = self.quizzes_dir / "000001.json"
         if not os.path.exists(default_quiz_path):
             import json
 
@@ -59,81 +65,46 @@ class OrangeQuiz(Star):
                         "options": [
                             {
                                 "label": "A",
-                                "text": "立刻抱回家，给它买最贵的狐狸粮",
-                                "weights": {"狐控度": 10},
+                                "text": "带它回家，给它买最好的肉，把它当祖宗供起来，天天给它梳毛！",
+                                "weights": {"总分": 10},
                             },
                             {
                                 "label": "B",
-                                "text": "rua两把然后假装没看见走掉",
-                                "weights": {"狐控度": 5},
+                                "text": "摸摸头，喂点吃的，然后帮它找收容所，或者发朋友圈找领养。",
+                                "weights": {"总分": 5},
                             },
                             {
                                 "label": "C",
-                                "text": "内心毫无波动，甚至有点想拨打动保电话",
-                                "weights": {"狐控度": 0},
+                                "text": "看一眼，觉得可爱，但不打算管，转身走人。",
+                                "weights": {"总分": 1},
+                            },
+                            {
+                                "label": "D",
+                                "text": "狐狸？不管，这玩意儿身上可能有寄生虫或者是保护动物，报警处理。",
+                                "weights": {"总分": 0},
                             },
                         ],
-                    },
-                    {
-                        "text": "当你看到小狐狸用超级蓬松的大尾巴当枕头睡觉时，你的第一反应是？",
-                        "options": [
-                            {
-                                "label": "A",
-                                "text": "疯狂拍照录像并发到朋友圈炫耀",
-                                "weights": {"狐控度": 5},
-                            },
-                            {
-                                "label": "B",
-                                "text": "把自己的脸埋进大尾巴里狠狠吸一口",
-                                "weights": {"狐控度": 10},
-                            },
-                            {
-                                "label": "C",
-                                "text": "觉得掉毛一定很难打扫",
-                                "weights": {"狐控度": 0},
-                            },
-                        ],
-                    },
-                    {
-                        "text": "小狐狸不小心打碎了你最喜欢的杯子，你会？",
-                        "options": [
-                            {
-                                "label": "A",
-                                "text": "大发雷霆，把狐狐轰出门外",
-                                "weights": {"狐控度": 0},
-                            },
-                            {
-                                "label": "B",
-                                "text": "只要狐狐没有被划伤爪子就好",
-                                "weights": {"狐控度": 10},
-                            },
-                            {
-                                "label": "C",
-                                "text": "让它面壁思过罚站五分钟",
-                                "weights": {"狐控度": 5},
-                            },
-                        ],
-                    },
+                    }
                 ],
                 "results_logic": {
-                    "狐控度": {
+                    "总分": {
                         "name": "综合评级",
                         "ranges": [
                             {
                                 "min": 0,
-                                "max": 10,
+                                "max": 1,
                                 "name": "铁石心肠",
                                 "desc": "你的心里只有冷酷的现实，完全免疫可爱的狐狐攻势。建议多看看动物纪录片培养感情。",
                             },
                             {
-                                "min": 11,
-                                "max": 20,
+                                "min": 2,
+                                "max": 5,
                                 "name": "理智欣赏者",
                                 "desc": "你觉得狐狐很可爱，但依然能保持清醒的理智，不会轻易被毛茸茸的美色迷惑。",
                             },
                             {
-                                "min": 21,
-                                "max": 30,
+                                "min": 6,
+                                "max": 10,
                                 "name": "超级骨灰级狐狸控",
                                 "desc": "承认吧，你根本拒绝不了毛茸茸的大尾巴！你完全就是个狐狸控，恨不得把全世界的可爱狐狐都带回家吸爆！",
                             },
@@ -144,19 +115,17 @@ class OrangeQuiz(Star):
             try:
                 with open(default_quiz_path, "w", encoding="utf-8") as f:
                     json.dump(default_quiz, f, ensure_ascii=False, indent=4)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Failed to write default quiz.", exc_info=e)
 
-        # Fire and forget init_db and cleanup task
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(init_db(self.base_data_dir))
-            loop.create_task(self._temp_cleanup_loop())
-        except RuntimeError:
-            pass  # No running loop yet, will lazy init if needed
+    async def _ensure_init(self):
+        if not getattr(self, "_initialized", False):
+            self._initialized = True
+            await init_db(self.base_data_dir)
+            asyncio.create_task(self._temp_cleanup_loop())
 
     async def _temp_cleanup_loop(self):
-        """Runs periodically to clean up temporary HTML and image files."""
+        """Runs periodically to clean up temporary HTML and image files, and expired sessions."""
         while True:
             try:
                 current_time = time.time()
@@ -167,8 +136,18 @@ class OrangeQuiz(Star):
                             # Clean up files older than 1 hour
                             if current_time - os.path.getmtime(filepath) > 3600:
                                 os.remove(filepath)
-            except Exception:
-                pass
+
+                # Clean up expired sessions (1 hour timeout)
+                for map_dict in [self.sessions, self.create_sessions]:
+                    expired_keys = [
+                        k
+                        for k, v in map_dict.items()
+                        if current_time - v.get("last_active", current_time) > 3600
+                    ]
+                    for k in expired_keys:
+                        del map_dict[k]
+            except Exception as e:
+                logger.error(f"OrangeQuiz cleanup loop error: {e}", exc_info=True)
             # Wait for 1 hour before next cleanup
             await asyncio.sleep(3600)
 
@@ -180,15 +159,16 @@ class OrangeQuiz(Star):
                 return prefixes[0]
             elif isinstance(prefixes, str) and prefixes:
                 return prefixes
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to fetch wake_prefix configuration: {e}")
         return "/"
 
     def _is_admin(self, user_id: str) -> bool:
         try:
             admins = self.context.get_config().get("admins_id", [])
             return str(user_id) in [str(a) for a in admins]
-        except Exception:
+        except Exception as e:
+            logger.error(f"OrangeQuiz error: {e}")
             return False
 
     async def _get_persona_prompt(self, event: AstrMessageEvent) -> str:
@@ -212,8 +192,8 @@ class OrangeQuiz(Star):
                             getattr(persona, "bot_info", str(persona)),
                         ),
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to fetch persona profile: {e}")
         return ""
 
     def _load_quiz(self, test_id: str) -> Dict:
@@ -223,7 +203,8 @@ class OrangeQuiz(Star):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.error(f"OrangeQuiz error: {e}")
             return None
 
     @filter.command("测试列表", alias=["问卷列表"], priority=1)
@@ -243,7 +224,8 @@ class OrangeQuiz(Star):
                     data = json.load(f)
                     author_postfix = f" (作者: {data.get('author', '未知')})"
                     reply += f"- {data.get('test_id')} : {data.get('title')}{author_postfix}\n"
-            except:
+            except Exception as e:
+                logger.warning(f"OrangeQuiz: Failed to load quiz file {file}: {e}")
                 continue
 
         if not reply.strip() == "=== 可用问卷列表 ===":
@@ -282,10 +264,7 @@ class OrangeQuiz(Star):
         event.stop_event()
         user_id = event.get_sender_id()
 
-        from .utils import db_handler as dbh
-
-        if not dbh.DB_PATH:
-            await init_db(self.base_data_dir)
+        await self._ensure_init()
 
         is_group = "group" in event.unified_msg_origin.lower()
         if is_group:
@@ -318,7 +297,11 @@ class OrangeQuiz(Star):
         if session_key in self.create_sessions:
             del self.create_sessions[session_key]
 
-        self.create_sessions[session_key] = {"step": "AWAITING_TITLE", "mod_count": 0}
+        self.create_sessions[session_key] = {
+            "step": "AWAITING_TITLE",
+            "mod_count": 0,
+            "last_active": time.time(),
+        }
         yield event.plain_result(
             "Tips: 接下来你可以随时回复“取消”退出操作。\n\n首先，你想创建一个什么问卷呢？请先为它起一个响亮的标题吧："
         )
@@ -354,6 +337,10 @@ class OrangeQuiz(Star):
             return
 
         session_key = f"{event.unified_msg_origin}_{event.get_sender_id()}"
+        if session_key in self.create_sessions:
+            self.create_sessions[session_key]["last_active"] = time.time()
+        if session_key in self.sessions:
+            self.sessions[session_key]["last_active"] = time.time()
         if session_key in self.sessions and "quiz" in self.sessions[session_key]:
             yield event.plain_result(
                 f"你已经在答题中了！请先完成或使用 {self.get_prefix()}退出测试 强制结束。"
@@ -376,7 +363,10 @@ class OrangeQuiz(Star):
                     f"🚫 防刷屏保护已开启：不支持在群聊内进行互动答题。\n👉 请前往与机器人的【私聊】窗口发送 {self.get_prefix()}quiz 发起测试！"
                 )
                 return
-            self.sessions[session_key] = {"step": "AWAITING_QUIZ_ID"}
+            self.sessions[session_key] = {
+                "last_active": time.time(),
+                "step": "AWAITING_QUIZ_ID",
+            }
             yield event.plain_result(
                 f"🎯 请发送您想测试的 【6位数问卷编码】（支持有无空格格式）\n（如果您不知道编码，可以先使用 {self.get_prefix()}quiz_list 查询所有可用测试）："
             )
@@ -428,6 +418,7 @@ class OrangeQuiz(Star):
             return
 
         self.sessions[session_key] = {
+            "last_active": time.time(),
             "test_id": quiz_id,
             "quiz": quiz_data,
             "current_q_idx": 0,
@@ -448,6 +439,10 @@ class OrangeQuiz(Star):
     async def quiz_stop(self, event: AstrMessageEvent):
         event.stop_event()
         session_key = f"{event.unified_msg_origin}_{event.get_sender_id()}"
+        if session_key in self.create_sessions:
+            self.create_sessions[session_key]["last_active"] = time.time()
+        if session_key in self.sessions:
+            self.sessions[session_key]["last_active"] = time.time()
         if session_key in self.sessions:
             del self.sessions[session_key]
             yield event.plain_result("已强制结束当前答题。")
@@ -650,37 +645,13 @@ class OrangeQuiz(Star):
         if any(msg.startswith(kw) for kw in cmd_keywords):
             return
 
-        from .utils import db_handler as dbh
-
-        if not dbh.DB_PATH:
-            await init_db(self.base_data_dir)
-
-        # 针对部分可能已经剥离前缀的情况，检查关键词
-        cmd_keywords = [
-            "quiz",
-            "测试",
-            "答题",
-            "做题",
-            "测试列表",
-            "问卷列表",
-            "热门测试",
-            "测试排名",
-            "创建测试",
-            "新增问卷",
-            "出题",
-            "退出测试",
-            "停止测试",
-            "结束答题",
-            "取消",
-            "退出",
-            "测试帮助",
-            "问卷帮助",
-            "答题帮助",
-        ]
-        if any(msg.startswith(kw) for kw in cmd_keywords):
-            return
+        await self._ensure_init()
 
         session_key = f"{event.unified_msg_origin}_{event.get_sender_id()}"
+        if session_key in self.create_sessions:
+            self.create_sessions[session_key]["last_active"] = time.time()
+        if session_key in self.sessions:
+            self.sessions[session_key]["last_active"] = time.time()
 
         # === Exit Command Interceptor ===
         if msg in ["退出", "取消", "不做了", "退", "结束"]:
@@ -904,6 +875,7 @@ class OrangeQuiz(Star):
             return
 
         session = self.sessions[session_key]
+        session["last_active"] = time.time()
 
         if session.get("step") == "AWAITING_QUIZ_ID":
             event.stop_event()
@@ -923,6 +895,7 @@ class OrangeQuiz(Star):
                 return
 
             self.sessions[session_key] = {
+                "last_active": time.time(),
                 "test_id": quiz_id,
                 "quiz": quiz_data,
                 "current_q_idx": 0,
@@ -1038,7 +1011,8 @@ class OrangeQuiz(Star):
                         timeout=60.0,
                     )
                     break
-                except Exception:
+                except Exception as e:
+                    logger.error(f"Failed to generate snarky eval: {e}", exc_info=True)
                     if attempt == 2:
                         if session_key in self.sessions:
                             del self.sessions[session_key]

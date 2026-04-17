@@ -1,6 +1,8 @@
 import json
 import re
 
+from astrbot.api import logger
+
 QUIZ_GEN_PROMPT = """你是一个专业的心理学测试或娱乐测试出题人。你需要根据给定的标题和内容方向，生成一份问卷。
 返回的格式必须是纯 JSON，不需要使用 Markdown 代码块包裹，也不要有任何其他分析和解释。
 
@@ -65,21 +67,40 @@ SNARKY_RESULT_PROMPT = """你是一个吐槽大师，此时正在扮演拥有【
 
 
 def extract_json(text: str) -> dict:
+    """Extract the first valid JSON object from a text string."""
     text = text.strip()
     # Remove markdown code block fences if present
     if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\n", "", text)
-        text = re.sub(r"\n```$", "", text)
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text.strip())
+    # Try direct parse first
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Fallback regex extraction
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
+        pass
+    # Find the first '{' and scan for matching '}' to extract a balanced JSON block
+    start = text.find("{")
+    if start == -1:
+        logger.warning("OrangeQuiz: extract_json found no '{' in LLM response.")
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start : i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        f"OrangeQuiz: JSON parse failed after extraction: {e}"
+                    )
+                    return None
+    logger.warning(
+        "OrangeQuiz: extract_json could not find balanced braces in LLM response."
+    )
     return None
 
 
