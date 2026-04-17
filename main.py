@@ -28,6 +28,8 @@ class OrangeQuiz(Star):
         self.config = config or {}
         self.sessions: Dict[str, Any] = {}
         self.create_sessions: Dict[str, Any] = {}
+        self._initialized = False
+        self._init_lock = asyncio.Lock()
 
         try:
             self.base_data_dir = StarTools.get_data_dir()
@@ -119,10 +121,16 @@ class OrangeQuiz(Star):
                 logger.error("Failed to write default quiz.", exc_info=e)
 
     async def _ensure_init(self):
-        if not getattr(self, "_initialized", False):
-            self._initialized = True
+        """Lazy async initialization guarded by a lock to prevent concurrent double-init."""
+        if self._initialized:
+            return
+        async with self._init_lock:
+            # Double-check after acquiring the lock
+            if self._initialized:
+                return
             await init_db(self.base_data_dir)
             asyncio.create_task(self._temp_cleanup_loop())
+            self._initialized = True
 
     async def _temp_cleanup_loop(self):
         """Runs periodically to clean up temporary HTML and image files, and expired sessions."""
@@ -500,7 +508,7 @@ class OrangeQuiz(Star):
         footer_text = (
             "可以和bot私聊参与测试 \n -- 由 Astrbot 插件 OrangeQuiz 强力驱动 --"
         )
-        invite_tip_text = f"对自己发送以上带有编号的指令，立刻开始测试！"
+        invite_tip_text = "对自己发送以上带有编号的指令，立刻开始测试！"
 
         if self.config:
             if "footer_text" in self.config and self.config["footer_text"].strip():
