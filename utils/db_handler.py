@@ -1,13 +1,13 @@
+from pathlib import Path
 import aiosqlite
-import os
 import datetime
 
 class DatabaseHandler:
     def __init__(self, db_dir: str):
-        self.db_path = os.path.join(db_dir, "orangequiz.db")
+        self.db_path = Path(db_dir) / "orangequiz.db"
 
     async def init_db(self):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS play_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,7 +36,7 @@ class DatabaseHandler:
 
     async def record_play(self, user_id: str, user_name: str, test_id: str, result_name: str, ai_comment: str):
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute(
                 """
                 INSERT INTO play_history (user_id, user_name, test_id, result_name, ai_comment, created_at)
@@ -55,7 +55,7 @@ class DatabaseHandler:
             await db.commit()
 
     async def get_hot_quizzes(self, limit: int = 5):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT test_id, play_count FROM test_stats ORDER BY play_count DESC LIMIT ?",
@@ -68,7 +68,7 @@ class DatabaseHandler:
                 ]
 
     async def get_user_history(self, user_id: str, test_id: str):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM play_history WHERE user_id = ? AND test_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -81,7 +81,7 @@ class DatabaseHandler:
 
     async def get_daily_create_count(self, user_id: str) -> int:
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             async with db.execute(
                 "SELECT COUNT(*) FROM create_history WHERE user_id = ? AND date(created_at) = ?",
                 (user_id, today),
@@ -91,6 +91,6 @@ class DatabaseHandler:
 
     async def record_create(self, user_id: str):
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute("INSERT INTO create_history (user_id, created_at) VALUES (?, ?)", (user_id, now_str))
             await db.commit()

@@ -1,19 +1,18 @@
-import json
 import os
+import re
+import json
 import time
 import asyncio
+import random
 from typing import Dict, Any
 from pathlib import Path
-from astrbot.api.all import *
+from astrbot.api.star import Context, Star, register
+from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.core.star.filter.event_message_type import EventMessageType
 from astrbot.api.star import StarTools
 from astrbot.api import logger
-
-from astrbot.api.event import filter, AstrMessageEvent
 from .utils.ai_handler import generate_quiz, generate_snarky_eval
 from .utils.db_handler import DatabaseHandler
-import html
-import random
-
 @register(
     "astrbot_plugin_orangequiz",
     "largefox",
@@ -22,6 +21,10 @@ import random
     "",
 )
 class OrangeQuiz(Star):
+    async def terminate(self):
+        if getattr(self, "_cleanup_task", None):
+            self._cleanup_task.cancel()
+
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
         self.config = config or {}
@@ -53,7 +56,6 @@ class OrangeQuiz(Star):
         # Generate default quiz if not exists
         default_quiz_path = self.quizzes_dir / "000001.json"
         if not os.path.exists(default_quiz_path):
-            import json
 
             default_quiz = {
                 "id": "000001",
@@ -129,7 +131,9 @@ class OrangeQuiz(Star):
                 return
             self.db = DatabaseHandler(str(self.base_data_dir))
             await self.db.init_db()
-            asyncio.create_task(self._temp_cleanup_loop())
+            if getattr(self, "_cleanup_task", None):
+                self._cleanup_task.cancel()
+            self._cleanup_task = asyncio.create_task(self._temp_cleanup_loop())
             self._initialized = True
 
     async def _temp_cleanup_loop(self):
@@ -219,27 +223,41 @@ class OrangeQuiz(Star):
             return None
 
     @filter.command("quiz_list", alias=["测试列表", "问卷列表"], priority=1)
-    async def quiz_list(self, event: AstrMessageEvent):
+    async def quiz_list(self, event: AstrMessageEvent, page: int = 1):
         event.stop_event()
         files = [f for f in os.listdir(self.quizzes_dir) if f.endswith(".json")]
         if not files:
             yield event.plain_result("当前没有任何可用的问卷！")
             return
 
-        reply = "=== 可用问卷列表 ===\n"
-        for file in files:
+        files.sort()
+        per_page = 10
+        total_pages = max(1, (len(files) + per_page - 1) // per_page)
+        
+        if page < 1:
+            page = 1
+        elif page > total_pages:
+            page = total_pages
+            
+        start_idx = (page - 1) * per_page
+        page_files = files[start_idx:start_idx+per_page]
+
+        reply = f"=== 可用问卷列表 (第 {page}/{total_pages} 页) ===\n"
+        loaded = 0
+        for file in page_files:
             try:
-                with open(
-                    self.quizzes_dir / file, "r", encoding="utf-8"
-                ) as f:
+                with open(self.quizzes_dir / file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     author_postfix = f" (作者: {data.get('author', '未知')})"
                     reply += f"- {data.get('test_id')} : {data.get('title')}{author_postfix}\n"
+                    loaded += 1
             except Exception as e:
                 logger.warning(f"OrangeQuiz: Failed to load quiz file {file}: {e}")
                 continue
 
-        if not reply.strip() == "=== 可用问卷列表 ===":
+        if loaded > 0:
+            if total_pages > 1:
+                reply += f"\n使用 {self.get_prefix()}quiz_list [页码] 进行翻页。"
             reply += f"\n使用 {self.get_prefix()}quiz [ID] 开始答题。"
             yield event.plain_result(reply)
         else:
@@ -394,10 +412,61 @@ class OrangeQuiz(Star):
                     )
                 return
 
-        if is_group and not allow_group:
+        is_gacha = quiz_data.get("type") == "gacha"
+
+        if is_group and not allow_group and not is_gacha:
             yield event.plain_result(
                 f"🚫 防刷屏保护已开启：不支持在群聊内答题。\n👉 请前往与机器人的【私聊】窗口发送 {self.get_prefix()}quiz {quiz_id} 开始测试！\n✅ 答题后，可在群里使用该命令分享结果。"
             )
+            return
+
+        if is_gacha:
+            outcomes = quiz_data.get("results_logic", {}).get("outcomes", [])
+            if not outcomes:
+                yield event.plain_result("该纯抽卡问卷奖池配置异常。")
+                return
+            
+            picked = random.choice(outcomes)
+            cat_name = picked.get("name", "神秘结果")
+            base_desc = picked.get("desc", "没有更多描述。")
+            
+            yield event.plain_result("🎲 正在为您祈愿抽签，请稍候...")
+            
+            ai_comment = await generate_snarky_eval(
+                self.context,
+                self.config.get("provider_id", ""),
+                quiz_data.get("title", "未知测试"),
+                cat_name,
+                base_desc,
+                "群聊直出抽签，命运使然直接抽中了此签。",
+                quiz_data.get("ai_tone", "神秘"),
+                self._get_persona_prompt(event),
+            )
+            if not ai_comment:
+                ai_comment = f"{cat_name}：{base_desc}"
+                
+            await self.db.record_play(
+                event.get_sender_id(),
+                event.get_sender_name(),
+                quiz_id,
+                cat_name,
+                ai_comment,
+            )
+            
+            try:
+                url = await self._render_poster(
+                    event,
+                    quiz_id,
+                    quiz_data.get("title", "未知测试"),
+                    cat_name,
+                    ai_comment,
+                )
+                yield event.image_result(url)
+            except Exception as e:
+                logger.error(f"Poster render failed: {e}")
+                yield event.plain_result(
+                    f"（结果海报生成失败）\n【{cat_name}】\n{ai_comment}"
+                )
             return
 
         questions = quiz_data.get("questions", [])
@@ -569,7 +638,15 @@ class OrangeQuiz(Star):
         desc = quiz_data.get("desc", "暂无简介")
         summary = f"📋 【问卷预览】\n标题：{quiz_data.get('title')}\n简介：{desc}\n作者：{author}\n题数：{q_count}\n"
 
-        if quiz_data.get("type") == "random":
+        if quiz_data.get("type") == "gacha":
+            summary += (
+                "分发机制：【纯抽卡盲盒（无需答题，群聊直出）】\n\n"
+            )
+            summary += "=== 可能摇出的结局池 ===\n"
+            r_logic = quiz_data.get("results_logic", {})
+            for r in r_logic.get("outcomes", []):
+                summary += f"- {r.get('name')}\n"
+        elif quiz_data.get("type") == "random":
             summary += (
                 "分发机制：【盲盒抽签（答案不影响结局分配）】\n\n=== 详细题目 ===\n"
             )
@@ -617,33 +694,24 @@ class OrangeQuiz(Star):
         summary += "\n💡 您可以回复【提交】来正式启用它！或者直接发来修改意见（如'题目数量少一点'、'选项分值调整为……'），我会为您量身修改。"
         return summary
 
-    @event_message_type(EventMessageType.ALL)
+    # ─────────────────────────────────────────────────────────
+    # on_message: 消息事件分发中枢（精简后只负责路由）
+    # ─────────────────────────────────────────────────────────
+
+    @filter.event_message_type(EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
-        # 兼容性检查：如果是指令消息，则跳过处理防，止双重触发
+        """消息总入口：过滤指令、更新时间戳、路由到对应处理器。"""
         msg = event.message_str.strip()
+
+        # 跳过指令前缀（防止与 @filter.command 双重触发）
         if msg.startswith("/") or msg.startswith("!"):
             return
 
         cmd_keywords = [
-            "quiz",
-            "测试",
-            "答题",
-            "做题",
-            "测试列表",
-            "问卷列表",
-            "热门测试",
-            "测试排名",
-            "创建测试",
-            "新增问卷",
-            "出题",
-            "退出测试",
-            "停止测试",
-            "结束答题",
-            "取消",
-            "退出",
-            "测试帮助",
-            "问卷帮助",
-            "答题帮助",
+            "quiz", "测试", "答题", "做题", "测试列表", "问卷列表",
+            "热门测试", "测试排名", "创建测试", "新增问卷", "出题",
+            "退出测试", "停止测试", "结束答题", "取消", "退出",
+            "测试帮助", "问卷帮助", "答题帮助",
         ]
         if any(msg.startswith(kw) for kw in cmd_keywords):
             return
@@ -651,231 +719,197 @@ class OrangeQuiz(Star):
         await self._ensure_init()
 
         session_key = f"{event.unified_msg_origin}_{event.get_sender_id()}"
-        if session_key in self.create_sessions:
-            self.create_sessions[session_key]["last_active"] = time.time()
-        if session_key in self.sessions:
-            self.sessions[session_key]["last_active"] = time.time()
 
-        # === Exit Command Interceptor ===
+        # 更新活跃时间戳
+        for sessions_map in [self.create_sessions, self.sessions]:
+            if session_key in sessions_map:
+                sessions_map[session_key]["last_active"] = time.time()
+
+        # 全局退出拦截（同时清理出题和答题 session）
         if msg in ["退出", "取消", "不做了", "退", "结束"]:
             deleted = False
-            if session_key in self.create_sessions:
-                del self.create_sessions[session_key]
-                deleted = True
-            if session_key in self.sessions:
-                del self.sessions[session_key]
-                deleted = True
+            for sessions_map in [self.create_sessions, self.sessions]:
+                if session_key in sessions_map:
+                    del sessions_map[session_key]
+                    deleted = True
             if deleted:
                 event.stop_event()
                 yield event.plain_result("✅ 已为您强制取消当前的所有问卷操作。")
-                return
-
-        # Create Session Interceptor
-        if session_key in self.create_sessions:
-            c_session = self.create_sessions[session_key]
-            step = c_session.get("step")
-
-            # Prevent interaction while waiting for AI
-            if step == "GENERATING":
-                event.stop_event()
-                return
-
-            event.stop_event()
-
-            if step == "AWAITING_TITLE":
-                c_session["title"] = msg
-                c_session["step"] = "AWAITING_CONTENT"
-                yield event.plain_result(
-                    "好的！接下来，请描述你想要什么样的问卷（如：“想要一个对男猫娘接受程度的问卷”“想要两个问题的问卷”，或者直接说“如题”），如果你有初步的问卷，也可以直接把你的问卷草稿粘贴在这里（AI 会帮您格式化为题目）："
-                )
-                return
-            elif step == "AWAITING_CONTENT":
-                c_session["content"] = msg
-                c_session["step"] = "AWAITING_TONE"
-                yield event.plain_result(
-                    "收到！最后，您希望之后做这份问卷的人，在得到结果时收到 AI 什么语气的吐槽评语？（如：毒舌犀利、温柔可爱、发疯文学、阴阳怪气...也可以是：狐狸的口吻、猫娘的口吻...）"
-                )
-                return
-            elif step == "AWAITING_TONE":
-                if "tone" not in c_session:
-                    c_session["tone"] = msg if msg else "毒舌犀利"
-                c_session["step"] = "GENERATING"
-                yield event.plain_result("🔍 正在绞尽脑汁为你生成测试问卷，请稍候...")
-
-                provider_id = await self.context.get_current_chat_provider_id(
-                    event.unified_msg_origin
-                )
-
-                actual_content = c_session["content"]
-                if c_session.get("feedback_mod"):
-                    actual_content += f"\n\n注意！我对上一版草稿不满意，请进行以下修改，重新出一份：{c_session['feedback_mod']}"
-
-                quiz_data = await generate_quiz(
-                    self.context,
-                    provider_id,
-                    c_session["title"],
-                    actual_content,
-                    c_session["tone"],
-                    persona_prompt=await self._get_persona_prompt(event),
-                )
-
-                if not quiz_data:
-                    c_session["step"] = "AWAITING_CONFIRMATION"
-                    yield event.plain_result(
-                        "生成或解析失败，AI脑子瓦特了。您可以输入【重生成】或其他修改要求重试，或发送【退出】。"
-                    )
-                    return
-
-                author_name = "玩家"
-                if hasattr(event, "get_sender_name"):
-                    author_name = event.get_sender_name()
-                quiz_data["author"] = author_name
-
-                # Store draft for review
-                c_session["draft_quiz"] = quiz_data
-                c_session["step"] = "AWAITING_CONFIRMATION"
-
-                q_count = len(quiz_data.get("questions", []))
-                warning = ""
-                if q_count > 6:
-                    warning = "\n⚠️ 提示：您生成的问卷题目过多（超越了推荐的 6 题限制）。如果您提交，可能会导致刷屏、体验不佳。"
-
-                preview = self._format_preview(quiz_data)
-                yield event.plain_result(preview + warning)
-                return
-
-            elif step == "AWAITING_CONFIRMATION":
-                if msg in ["提交", "确认", "确定", "好", "可以"]:
-                    quiz_data = c_session.get("draft_quiz")
-                    if not quiz_data:
-                        yield event.plain_result(
-                            "草稿丢失，请发送修改意见重组或发送退出。"
-                        )
-                        return
-
-                    
-                    def generate_6_digit() -> str:
-                        while True:
-                            code = str(random.randint(100000, 999999))
-                            if not os.path.exists(
-                                self.quizzes_dir / f"{code}.json"
-                            ):
-                                return code
-
-                    test_id = generate_6_digit()
-                    quiz_data["test_id"] = test_id
-
-                    filepath = self.quizzes_dir / f"{test_id}.json"
-                    try:
-                        with open(filepath, "w", encoding="utf-8") as f:
-                            json.dump(quiz_data, f, ensure_ascii=False, indent=2)
-
-                        await self.db.record_create(event.get_sender_id())
-
-                        yield event.plain_result(
-                            f"✅ 保存并启用成功！分配的测试专享编码为： {test_id} \n\n别人可以直接发送：\n{self.get_prefix()}quiz {test_id}\n立刻开启本问卷的体验！"
-                        )
-
-                        try:
-                            invite_url = await self._render_invite_poster(
-                                event,
-                                test_id,
-                                quiz_data.get("title", "未知测试"),
-                                len(quiz_data.get("questions", [])),
-                                quiz_data.get("author", "玩家"),
-                                quiz_data.get(
-                                    "desc",
-                                    "这是一份超有趣的属性鉴定测试，快来试试看吧！",
-                                ),
-                            )
-                            if invite_url:
-                                yield event.image_result(invite_url)
-                        except Exception:
-                            pass
-
-                    except Exception as e:
-                        yield event.plain_result(f"保存问卷失败：{e}")
-
-                    if session_key in self.create_sessions:
-                        del self.create_sessions[session_key]
-                    return
-                elif msg in ["重生成"]:
-                    max_mod = int(self.config.get("max_modify_count", 8))
-                    if c_session.get("mod_count", 0) >= max_mod:
-                        yield event.plain_result(
-                            f"⚠️ 本次生成的重试/修改次数已经耗尽（上限 {max_mod} 次）。请您在上述生成的版本中回复【提交】，或者发送【退出】以释放配额。"
-                        )
-                        return
-
-                    c_session["mod_count"] = c_session.get("mod_count", 0) + 1
-                    c_session["step"] = "AWAITING_TONE"
-                    yield event.plain_result(
-                        f"好的，正在为您原样重新生成一版...(耗用修改次数: {c_session['mod_count']}/{max_mod})"
-                    )
-                    c_session["feedback_mod"] = ""
-                else:
-                    max_mod = int(self.config.get("max_modify_count", 8))
-                    if c_session.get("mod_count", 0) >= max_mod:
-                        yield event.plain_result(
-                            f"⚠️ 本次生成的重试/修改次数已经耗尽（上限 {max_mod} 次）。请您在上述生成的版本中回复【提交】，或者发送【退出】以释放配额。"
-                        )
-                        return
-
-                    c_session["mod_count"] = c_session.get("mod_count", 0) + 1
-                    c_session["feedback_mod"] = msg
-                    c_session["step"] = "AWAITING_TONE"
-                    yield event.plain_result(
-                        f"收到您的修改要求，正在打翻重做，请稍候...(耗用修改次数: {c_session['mod_count']}/{max_mod})"
-                    )
-
-                # If falling through to here naturally due to '重生成' or feedback, re-trigger logic inline:
-                # To prevent recursion issues, we manually trigger the block logic
-                c_session["step"] = "GENERATING"
-                provider_id = await self.context.get_current_chat_provider_id(
-                    event.unified_msg_origin
-                )
-                actual_content = c_session["content"]
-                if c_session.get("feedback_mod"):
-                    actual_content += f"\n\n注意！我对上一版草稿不满意，请进行以下修改，重新出一份：{c_session['feedback_mod']}"
-
-                quiz_data = await generate_quiz(
-                    self.context,
-                    provider_id,
-                    c_session["title"],
-                    actual_content,
-                    c_session["tone"],
-                    persona_prompt=await self._get_persona_prompt(event),
-                )
-
-                if not quiz_data:
-                    c_session["step"] = "AWAITING_CONFIRMATION"
-                    yield event.plain_result(
-                        "生成或解析失败，AI脑子瓦特了。您可以输入【重生成】或其他修改要求重试，或发送【退出】。"
-                    )
-                    return
-
-                author_name = "玩家"
-                if hasattr(event, "get_sender_name"):
-                    author_name = event.get_sender_name()
-                quiz_data["author"] = author_name
-
-                c_session["draft_quiz"] = quiz_data
-                c_session["step"] = "AWAITING_CONFIRMATION"
-
-                q_count = len(quiz_data.get("questions", []))
-                warning = ""
-                if q_count > 6:
-                    warning = "\n⚠️ 提示：您生成的问卷题目过多（超越了推荐的 6 题限制）。如果您执意提交，可能会导致群聊刷屏或答题体验不佳。继续吗？"
-
-                preview = self._format_preview(quiz_data)
-                yield event.plain_result(preview + warning)
-                return
-
-        if session_key not in self.sessions:
             return
 
+        # 路由到出题 session 处理器
+        if session_key in self.create_sessions:
+            async for result in self._handle_create_session(event, session_key, msg):
+                yield result
+            return
+
+        # 路由到答题 session 处理器
+        if session_key in self.sessions:
+            async for result in self._handle_quiz_session(event, session_key, msg):
+                yield result
+
+    # ─────────────────────────────────────────────────────────
+    # 出题状态机处理器
+    # ─────────────────────────────────────────────────────────
+
+    async def _handle_create_session(self, event: AstrMessageEvent, session_key: str, msg: str):
+        """处理出题流程各阶段。"""
+        c_session = self.create_sessions[session_key]
+        step = c_session.get("step")
+
+        if step == "GENERATING":
+            event.stop_event()
+            return
+
+        event.stop_event()
+
+        if step == "AWAITING_TITLE":
+            c_session["title"] = msg
+            c_session["step"] = "AWAITING_CONTENT"
+            yield event.plain_result(
+                "好的！接下来，请描述你想要什么样的问卷（如：想要一个对男猫娘接受程度的问卷、想要两个问题的问卷，或者直接说\"如题\"），如果你有初步的问卷，也可以直接把你的问卷草稿粘贴在这里（AI 会帮您格式化为题目）："
+            )
+            return
+
+        if step == "AWAITING_CONTENT":
+            c_session["content"] = msg
+            c_session["step"] = "AWAITING_TONE"
+            yield event.plain_result(
+                "收到！最后，您希望之后做这份问卷的人，在得到结果时收到 AI 什么语气的吐槽评语？（如：毒舌犀利、温柔可爱、发疯文学、阴阳怪气...也可以是：狐狸的口吻、猫娘的口吻...）"
+            )
+            return
+
+        if step == "AWAITING_TONE":
+            if "tone" not in c_session:
+                c_session["tone"] = msg if msg else "毒舌犀利"
+            async for result in self._generate_and_preview_quiz(event, session_key):
+                yield result
+            return
+
+        if step == "AWAITING_CONFIRMATION":
+            async for result in self._handle_confirmation(event, session_key, msg):
+                yield result
+
+    async def _generate_and_preview_quiz(self, event: AstrMessageEvent, session_key: str):
+        """调用 LLM 生成问卷草稿并向用户展示预览。"""
+        c_session = self.create_sessions[session_key]
+        c_session["step"] = "GENERATING"
+        yield event.plain_result("🔍 正在绞尽脑汁为你生成测试问卷，请稍候...")
+
+        provider_id = await self.context.get_current_chat_provider_id(event.unified_msg_origin)
+
+        actual_content = c_session["content"]
+        if c_session.get("feedback_mod"):
+            actual_content += (
+                f"\n\n注意！我对之前生成的草稿不满意，请进行以下综合修改，重新出一份：\n{c_session['feedback_mod']}"
+            )
+
+        quiz_data = await generate_quiz(
+            self.context,
+            provider_id,
+            c_session["title"],
+            actual_content,
+            c_session["tone"],
+            persona_prompt=await self._get_persona_prompt(event),
+        )
+
+        if not quiz_data:
+            c_session["step"] = "AWAITING_CONFIRMATION"
+            yield event.plain_result(
+                "生成或解析失败，AI脑子瓦特了。您可以输入【重生成】或其他修改要求重试，或发送【退出】。"
+            )
+            return
+
+        author_name = event.get_sender_name() if hasattr(event, "get_sender_name") else "玩家"
+        quiz_data["author"] = author_name
+        c_session["draft_quiz"] = quiz_data
+        c_session["step"] = "AWAITING_CONFIRMATION"
+
+        warning = ""
+        if len(quiz_data.get("questions", [])) > 6:
+            warning = "\n⚠️ 提示：您生成的问卷题目过多（超越了推荐的 6 题限制）。如果您提交，可能会导致刷屏、体验不佳。"
+
+        yield event.plain_result(self._format_preview(quiz_data) + warning)
+
+    async def _handle_confirmation(self, event: AstrMessageEvent, session_key: str, msg: str):
+        """处理用户在 AWAITING_CONFIRMATION 状态下的确认/修改/重生成操作。"""
+        c_session = self.create_sessions[session_key]
+        max_mod = int(self.config.get("max_modify_count", 8))
+
+        if msg in ["提交", "确认", "确定", "好", "可以"]:
+            quiz_data = c_session.get("draft_quiz")
+            if not quiz_data:
+                yield event.plain_result("草稿丢失，请发送修改意见重组或发送退出。")
+                return
+
+            def generate_6_digit() -> str:
+                for _ in range(100):
+                    code = str(random.randint(100000, 999999))
+                    if not os.path.exists(self.quizzes_dir / f"{code}.json"):
+                        return code
+                raise RuntimeError("无法生成新的问卷 ID，已达到最大重试次数 100")
+
+            test_id = generate_6_digit()
+            quiz_data["test_id"] = test_id
+
+            try:
+                with open(self.quizzes_dir / f"{test_id}.json", "w", encoding="utf-8") as f:
+                    json.dump(quiz_data, f, ensure_ascii=False, indent=2)
+                await self.db.record_create(event.get_sender_id())
+                yield event.plain_result(
+                    f"✅ 保存并启用成功！分配的测试专享编码为： {test_id} \n\n别人可以直接发送：\n{self.get_prefix()}quiz {test_id}\n立刻开启本问卷的体验！"
+                )
+                try:
+                    invite_url = await self._render_invite_poster(
+                        event, test_id,
+                        quiz_data.get("title", "未知测试"),
+                        len(quiz_data.get("questions", [])),
+                        quiz_data.get("author", "玩家"),
+                        quiz_data.get("desc", "这是一份超有趣的属性鉴定测试，快来试试看吧！"),
+                    )
+                    if invite_url:
+                        yield event.image_result(invite_url)
+                except Exception:
+                    pass
+            except Exception as e:
+                yield event.plain_result(f"保存问卷失败：{e}")
+
+            if session_key in self.create_sessions:
+                del self.create_sessions[session_key]
+            return
+
+        # ── 修改类操作 ───────────────────────────────────────
+        if c_session.get("mod_count", 0) >= max_mod:
+            yield event.plain_result(
+                f"⚠️ 本次生成的重试/修改次数已经耗尽（上限 {max_mod} 次）。请您在上述生成的版本中回复【提交】，或者发送【退出】以释放配额。"
+            )
+            return
+
+        c_session["mod_count"] = c_session.get("mod_count", 0) + 1
+
+        if msg == "重生成":
+            c_session["feedback_mod"] = ""
+            yield event.plain_result(
+                f"好的，正在为您原样重新生成一版...(耗用修改次数: {c_session['mod_count']}/{max_mod})"
+            )
+        else:
+            prior_fb = c_session.get("feedback_mod", "")
+            new_fb = f"第 {c_session['mod_count']} 次修改要求：{msg}"
+            c_session["feedback_mod"] = f"{prior_fb}\n{new_fb}" if prior_fb else new_fb
+            yield event.plain_result(
+                f"收到您的修改要求，正在打翻重做，请稍候...(耗用修改次数: {c_session['mod_count']}/{max_mod})"
+            )
+
+        async for result in self._generate_and_preview_quiz(event, session_key):
+            yield result
+
+    # ─────────────────────────────────────────────────────────
+    # 答题状态机处理器
+    # ─────────────────────────────────────────────────────────
+
+    async def _handle_quiz_session(self, event: AstrMessageEvent, session_key: str, msg: str):
+        """处理用户答题过程的全生命周期。"""
         session = self.sessions[session_key]
-        session["last_active"] = time.time()
 
         if session.get("step") == "AWAITING_QUIZ_ID":
             event.stop_event()
@@ -883,17 +917,13 @@ class OrangeQuiz(Star):
             quiz_data = self._load_quiz(quiz_id)
             if not quiz_data:
                 del self.sessions[session_key]
-                yield event.plain_result(
-                    f"找不到编码为 {quiz_id} 的问卷，已为您取消当前操作。"
-                )
+                yield event.plain_result(f"找不到编码为 {quiz_id} 的问卷，已为您取消当前操作。")
                 return
-
             questions = quiz_data.get("questions", [])
             if not questions:
                 del self.sessions[session_key]
                 yield event.plain_result("这个问卷没有题目，已为您取消。")
                 return
-
             self.sessions[session_key] = {
                 "last_active": time.time(),
                 "test_id": quiz_id,
@@ -914,25 +944,14 @@ class OrangeQuiz(Star):
         q_idx = session["current_q_idx"]
         question = quiz_data["questions"][q_idx]
 
-        import re
-        raw_msg = str(event.message_str).strip()
-        
-        # 兼容全角字母映射
+        # 规范化用户输入：全角→半角，提取首个字母/数字，数字映射到选项标签
         fullwidth_map = str.maketrans(
             "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ",
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
         )
-        raw_msg = raw_msg.translate(fullwidth_map)
-        
-        # 提取第一个连续的字母或数字（例如把 "选项A", "a." 统一转换为 "A"）
-        match = re.search(r"([A-Za-z0-9]+)", raw_msg)
-        if match:
-            answer = match.group(1).upper()
-        else:
-            answer = raw_msg.upper()
-
-        # map 1,2,3,4 -> A,B,C,D assuming A is 1, B is 2, etc. (for simple index mapping if options have labels A, B)
-        # To be safe, if user inputs '1', we cast to int, then get the 0th option's label.
+        normalized = msg.translate(fullwidth_map)
+        match = re.search(r"([A-Za-z0-9]+)", normalized)
+        answer = match.group(1).upper() if match else normalized.upper()
         if answer.isdigit():
             idx = int(answer) - 1
             if 0 <= idx < len(question["options"]):
@@ -944,150 +963,115 @@ class OrangeQuiz(Star):
             yield event.plain_result(f"无效的选项，请重新输入（有效选项: {', '.join(valid_labels)}）")
             return
 
-        # calculate weights
         selected_opt = next(
-            (opt for opt in question["options"] if str(opt.get("label", "")).strip().upper() == answer), None
+            (opt for opt in question["options"] if str(opt.get("label", "")).strip().upper() == answer),
+            None,
         )
         if selected_opt and "weights" in selected_opt:
             for category, weight in selected_opt["weights"].items():
-                session["scores"][category] = (
-                    session["scores"].get(category, 0) + weight
-                )
+                session["scores"][category] = session["scores"].get(category, 0) + weight
 
-        # Track trajectory
         opt_text = selected_opt["text"] if selected_opt else answer
         session["trajectory"].append(f"Q: {question['text']} -> A: {opt_text}")
-
-        # Next question
         session["current_q_idx"] += 1
         q_idx = session["current_q_idx"]
 
-        if q_idx >= len(quiz_data["questions"]):
+        if q_idx < len(quiz_data["questions"]):
             event.stop_event()
-            session["generating"] = True
-            yield event.plain_result("🔍 正在为您生成结算报告，请稍候...")
-            # Finish
+            yield event.plain_result(self._format_question(quiz_data, q_idx))
+            return
 
-            if quiz_data.get("type") == "random":
-                
-                outcomes = quiz_data.get("results_logic", {}).get("outcomes", [])
-                if outcomes:
-                    picked = random.choice(outcomes)
-                    cat_name = picked.get("name", "神秘随机结果")
-                    cat_desc = picked.get("desc", "")
-                else:
-                    cat_name = "未定义随机"
-                    cat_desc = ""
-            else:
-                scores = session["scores"]
-                if not scores:
-                    # fallback
-                    cat_name = "未知"
-                    cat_desc = "在没有得分中结束"
-                else:
-                    max_cat = max(scores, key=scores.get)
-                    cat_score = scores[max_cat]
-                    result_logic = quiz_data.get("results_logic", {}).get(max_cat, {})
+        # ── 答题结束，进入结算 ──────────────────────────────────
+        event.stop_event()
+        session["generating"] = True
+        yield event.plain_result("🔍 正在为您生成结算报告，请稍候...")
 
-                    cat_name = max_cat
-                    cat_desc = ""
+        cat_name, cat_desc = self._resolve_result(quiz_data, session)
 
-                    # Support for range-based scoring within a category
-                    if "ranges" in result_logic:
-                        for r in result_logic["ranges"]:
-                            if r["min"] <= cat_score <= r["max"]:
-                                cat_name = r.get("name", cat_name)
-                                cat_desc = r.get("desc", r.get("base_desc", ""))
-                                break
-                    else:
-                        cat_name = result_logic.get("name", max_cat)
-                        cat_desc = result_logic.get("base_desc", "")
+        provider_id = await self.context.get_current_chat_provider_id(event.unified_msg_origin)
+        traj_str = "\n".join(session["trajectory"])
+        tone = quiz_data.get("ai_tone", "可爱+专业")
 
-            provider_id = await self.context.get_current_chat_provider_id(
-                event.unified_msg_origin
-            )
-            traj_str = "\n".join(session["trajectory"])
-            tone = quiz_data.get("ai_tone", "可爱+专业")
-            snarky_eval = ""
+        snarky_eval = ""
+        for attempt in range(3):
+            try:
+                snarky_eval = await asyncio.wait_for(
+                    generate_snarky_eval(
+                        self.context, provider_id,
+                        quiz_data.get("title", "未知测试"),
+                        cat_name, cat_desc, traj_str, tone,
+                        persona_prompt=await self._get_persona_prompt(event),
+                    ),
+                    timeout=60.0,
+                )
+                break
+            except Exception as e:
+                logger.error(f"Failed to generate snarky eval: {e}", exc_info=True)
+                if attempt == 2:
+                    if session_key in self.sessions:
+                        del self.sessions[session_key]
+                    yield event.plain_result("⚠️ 生成 AI 评论连续 3 次超时或失败，已自动取消本次结算。请稍后再试。")
+                    return
+                await asyncio.sleep(2)
+
+        result_text = f"🏆 测试完成！\n结果：{cat_name}\nAI 解读：\n{snarky_eval}"
+
+        try:
+            user_id = event.get_sender_id()
+            user_name = event.get_sender_name() if hasattr(event, "get_sender_name") else "玩家"
+            await self.db.record_play(user_id, user_name, session["test_id"], cat_name, snarky_eval)
+
+            url = None
             for attempt in range(3):
                 try:
-                    snarky_eval = await asyncio.wait_for(
-                        generate_snarky_eval(
-                            self.context,
-                            provider_id,
+                    url = await asyncio.wait_for(
+                        self._render_poster(
+                            event, session["test_id"],
                             quiz_data.get("title", "未知测试"),
-                            cat_name,
-                            cat_desc,
-                            traj_str,
-                            tone,
-                            persona_prompt=await self._get_persona_prompt(event),
+                            cat_name, snarky_eval,
                         ),
                         timeout=60.0,
                     )
                     break
                 except Exception as e:
-                    logger.error(f"Failed to generate snarky eval: {e}", exc_info=True)
                     if attempt == 2:
-                        if session_key in self.sessions:
-                            del self.sessions[session_key]
-                        yield event.plain_result(
-                            "⚠️ 生成 AI 评论连续 3 次超时或失败，已自动取消本次结算。请稍后再试。"
-                        )
-                        return
+                        raise e
                     await asyncio.sleep(2)
-
-            result_text = f"🏆 测试完成！\n结果：{cat_name}\nAI 解读：\n{snarky_eval}"
-
-            # 记录落库
-            try:
-                user_id = event.get_sender_id()
-                # 尝试获取昵称
-                user_name = "玩家"
-                if hasattr(event, "get_sender_name"):
-                    user_name = event.get_sender_name()
-
-                await self.db.record_play(
-                    user_id, user_name, session["test_id"], cat_name, snarky_eval
-                )
-
-                url = None
-                for attempt in range(3):
-                    try:
-                        url = await asyncio.wait_for(
-                            self._render_poster(
-                                event,
-                                session["test_id"],
-                                quiz_data.get("title", "未知测试"),
-                                cat_name,
-                                snarky_eval,
-                            ),
-                            timeout=60.0,
-                        )
-                        break
-                    except Exception as e:
-                        if attempt == 2:
-                            raise e
-                        await asyncio.sleep(2)
-
-                if session_key in self.sessions:
-                    del self.sessions[session_key]
-
-                yield event.image_result(url)
-
-                if "group" not in event.unified_msg_origin.lower():
-                    yield event.plain_result(
-                        f"💡 偷偷告诉你：如果您想在群聊中炫耀结论，可以在群内发送 {self.get_prefix()}quiz {session['test_id']} 展示海报（需要机器人在群里）！\n如果您想刷新命运重测一次，请发送 {self.get_prefix()}quiz {session['test_id']} retry"
-                    )
-
-                return
-            except Exception as e:
-                yield event.plain_result(
-                    result_text + f"\n\n(图片生成已降级，因出现错误：{e})"
-                )
 
             if session_key in self.sessions:
                 del self.sessions[session_key]
-            yield event.plain_result(result_text)
-        else:
-            event.stop_event()
-            yield event.plain_result(self._format_question(quiz_data, q_idx))
+
+            yield event.image_result(url)
+
+            if "group" not in event.unified_msg_origin.lower():
+                yield event.plain_result(
+                    f"💡 偷偷告诉你：如果您想在群聊中炫耀结论，可以在群内发送 {self.get_prefix()}quiz {session['test_id']} 展示海报！\n如果您想刷新命运重测一次，请发送 {self.get_prefix()}quiz {session['test_id']} retry"
+                )
+        except Exception as e:
+            if session_key in self.sessions:
+                del self.sessions[session_key]
+            yield event.plain_result(result_text + f"\n\n(图片生成已降级，因出现错误：{e})")
+
+    def _resolve_result(self, quiz_data: dict, session: dict) -> tuple:
+        """根据问卷类型和答题分数，计算最终结果分类名称与描述。"""
+        if quiz_data.get("type") == "random":
+            outcomes = quiz_data.get("results_logic", {}).get("outcomes", [])
+            if outcomes:
+                picked = random.choice(outcomes)
+                return picked.get("name", "神秘随机结果"), picked.get("desc", "")
+            return "未定义随机", ""
+
+        scores = session.get("scores", {})
+        if not scores:
+            return "未知", "在没有得分中结束"
+
+        max_cat = max(scores, key=scores.get)
+        cat_score = scores[max_cat]
+        result_logic = quiz_data.get("results_logic", {}).get(max_cat, {})
+
+        if "ranges" in result_logic:
+            for r in result_logic["ranges"]:
+                if r["min"] <= cat_score <= r["max"]:
+                    return r.get("name", max_cat), r.get("desc", r.get("base_desc", ""))
+        return result_logic.get("name", max_cat), result_logic.get("base_desc", "")
+
