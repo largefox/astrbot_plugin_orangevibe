@@ -1,23 +1,25 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-    <meta charset="utf-8">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.1.0/style.css" />
     <style>
         body {
             margin: 0;
             padding: 80px 0;
             background-color: #f8fbff;
-            background-image: 
-                radial-gradient(at 0% 0%, hsla(210,100%,74%,0.8) 0, transparent 50%), 
-                radial-gradient(at 50% 0%, hsla(180,100%,76%,0.8) 0, transparent 50%), 
-                radial-gradient(at 100% 0%, hsla(200,100%,77%,0.8) 0, transparent 50%);
-            font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-image:
+                radial-gradient(at 0% 0%, hsla(210, 100%, 74%, 0.8) 0, transparent 50%),
+                radial-gradient(at 50% 0%, hsla(180, 100%, 76%, 0.8) 0, transparent 50%),
+                radial-gradient(at 100% 0%, hsla(200, 100%, 77%, 0.8) 0, transparent 50%);
+            font-family: "LXGW WenKai Screen", "LXGW WenKai", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             box-sizing: border-box;
         }
+
         .card {
             width: 94%;
             max-width: 1200px;
@@ -26,7 +28,7 @@
             -webkit-backdrop-filter: blur(20px);
             border-radius: 40px;
             box-shadow: 0 30px 60px rgba(0, 118, 255, 0.15),
-                        inset 0 2px 0 0 rgba(255, 255, 255, 1);
+                inset 0 2px 0 0 rgba(255, 255, 255, 1);
             padding: 80px;
             box-sizing: border-box;
             display: flex;
@@ -34,15 +36,15 @@
             align-items: center;
             position: relative;
         }
-        
+
         .header-badge {
             background: linear-gradient(135deg, #0076ff, #00b4db);
             color: white;
-            padding: 12px 30px;
+            padding: 16px 40px;
             border-radius: 50px;
-            font-size: 24px;
-            font-weight: 600;
-            letter-spacing: 2px;
+            font-size: 36px;
+            font-weight: 900;
+            letter-spacing: 4px;
             margin-bottom: 40px;
             box-shadow: 0 10px 20px rgba(0, 118, 255, 0.3);
         }
@@ -98,7 +100,7 @@
             color: #555;
             font-size: 36px;
             font-weight: 500;
-            background: rgba(0,0,0,0.05);
+            background: rgba(0, 0, 0, 0.05);
             padding: 20px 40px;
             border-radius: 20px;
             text-align: center;
@@ -114,17 +116,20 @@
         }
     </style>
 </head>
+
 <body>
     <div class="card">
         <div class="header-badge">🆕 全新鉴定发布</div>
         <div class="title">{{ vibe_title }}</div>
-        <div class="subtitle">共包含 {{ q_count }} 道题目 · 作者: <span style="color:#0076ff; font-weight:bold;">{{ author_name }}</span></div>
+        <div class="subtitle">共包含 {{ q_count }} 道题目 · 作者: <span style="color:#0076ff; font-weight:bold;">{{ author_name
+                }}</span></div>
         <div class="desc-box">{{ vibe_desc }}</div>
-        
+
         <div class="test-id-box">{{ command_str }} {{ display_id }}</div>
         <div class="invite-tip">{{ invite_tip_text }}</div>
-        
+
         <div class="footer">{{ footer_text }}</div>
     </div>
 </body>
+
 </html>

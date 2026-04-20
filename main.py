@@ -473,7 +473,7 @@ class OrangeVibe(Star):
             self.sessions[session_key]["last_active"] = time.time()
         if session_key in self.sessions and "vibe" in self.sessions[session_key]:
             yield event.plain_result(
-                f"你已经在测算中了！请先完成或使用 {self.get_prefix()}vibe_stop 强制结束。"
+                f"你已经在测算中了！请先完成，或者随时回复“取消”（或使用 {self.get_prefix()}vibe_stop）强制结束。"
             )
             return
 
@@ -521,7 +521,7 @@ class OrangeVibe(Star):
                 # 群聊里直接展示海报即可，私聊里额外附一条操作提示
                 if "group" not in event.unified_msg_origin.lower():
                     yield event.plain_result(
-                        f"🔥 系统检测到您之前已经测过这份鉴定了！已为您智能调取当时的专属绝赞档案记录。\n（💡 偷偷告诉你：如果您想在群聊中炫耀结论并拉取同款成分群友雷达，可以在任意已部署机器人的群内发送 {self.get_prefix()}测成分 {vibe_id} 展示海报！\n如果您想刷新命运重拿剧本，请发送 {self.get_prefix()}测成分 {vibe_id} retry）"
+                        f"🔥 系统检测到您之前已经测过这份鉴定了！已为您智能调取当时的专属绝赞档案记录。\n（💡 偷偷告诉你：如果您想在群聊中炫耀结论并查询同款成分群友，可以在任意已部署机器人的群内发送 {self.get_prefix()}测成分 {vibe_id} 展示海报！\n如果您想刷新命运重拿剧本，请发送 {self.get_prefix()}重测成分 {vibe_id}）"
                     )
                 try:
                     url = await self._render_poster(
@@ -673,7 +673,7 @@ class OrangeVibe(Star):
         session_key = f"{event.unified_msg_origin}_{event.get_sender_id()}"
         if session_key in self.sessions and "vibe" in self.sessions[session_key]:
             yield event.plain_result(
-                f"你已经在测算中了！请先完成或使用 {self.get_prefix()}vibe_stop 强制结束。"
+                f"你已经在测算中了！请先完成，或者随时回复“取消”（或使用 {self.get_prefix()}vibe_stop）强制结束。"
             )
             return
         questions = vibe_data.get("questions", [])
@@ -1327,7 +1327,7 @@ class OrangeVibe(Star):
 
             if "group" not in event.unified_msg_origin.lower():
                 yield event.plain_result(
-                    f"💡 偷偷告诉你：如果您想在群聊中炫耀结论，可以在群内发送 {self.get_prefix()}测成分 {session['test_id']} 展示海报！\n如果您想刷新命运重测一次，请发送 {self.get_prefix()}测成分 {session['test_id']} retry"
+                    f"💡 偷偷告诉你：如果您想在群聊中炫耀结论，可以在群内发送 {self.get_prefix()}测成分 {session['test_id']} 展示海报！\n如果您想刷新命运重测一次，请发送 {self.get_prefix()}重测成分 {session['test_id']}"
                 )
         except Exception as e:
             if session_key in self.sessions:
